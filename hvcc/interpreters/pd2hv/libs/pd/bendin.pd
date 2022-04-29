@@ -10,7 +10,7 @@
 #X obj 124 191 i \$1;
 #X msg 31 147 \$2 \$1;
 #X obj 91 235 spigot;
-#X msg 91 208 \$1;
+#X msg 91 208 \$2;
 #X obj 148 108 + 1;
 #X connect 1 1 12 0;
 #X connect 3 0 1 0;
