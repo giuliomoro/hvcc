@@ -11,7 +11,7 @@ jobs:
         id: message
         run: |
           message="${{ github.actor }} pushed $(echo ${{ toJSON(github.event.commits[0].message) }} | head -n 1) ${{ github.event.commits[0].url }}"
-          echo ::set-output name=message::"${message}"
+          echo "{name}={message}" >> $GITHUB_OUTPUT
       - name: IRC notification
         uses: Gottox/irc-message-action@v2
         with:
