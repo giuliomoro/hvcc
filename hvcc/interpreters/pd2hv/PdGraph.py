@@ -1,5 +1,5 @@
 # Copyright (C) 2014-2018 Enzien Audio, Ltd.
-# Copyright (C) 2023 Wasted Audio
+# Copyright (C) 2023-2026 Wasted Audio
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,20 +14,23 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
-from typing import Optional, List, Dict
+from typing import Optional, Any
+from pathlib import Path
 
 from .Connection import Connection
 from .NotificationEnum import NotificationEnum
 from .PdObject import PdObject
+
+from hvcc.types.compiler import CompilerNotif
+from hvcc.types.Heavy import Heavy, HvPos
 
 
 class PdGraph(PdObject):
 
     def __init__(
         self,
-        obj_args: List,
-        pd_path: str,
+        obj_args: list,
+        pd_path: Path,
         pos_x: int = 0,
         pos_y: int = 0
     ) -> None:
@@ -35,27 +38,27 @@ class PdGraph(PdObject):
         super().__init__("graph", obj_args, pos_x, pos_y)
 
         # file location of this graph
-        self.__pd_path = pd_path
+        self.__pd_path: Path = pd_path
 
-        self.__objs: List = []
-        self.__connections: List = []
+        self.__objs: list[PdObject] = []
+        self.__connections: list[Connection] = []
 
-        self.__inlet_objects: List = []
-        self.__outlet_objects: List = []
+        self.__inlet_objects: list = []
+        self.__outlet_objects: list = []
 
         # the first search path is always the directory of this graph
-        self.__declared_paths: List = [os.path.dirname(pd_path)]
+        self.__declared_paths: list[Path] = [pd_path.parent]
 
         # heavy graph arguments (added via @hv_arg flag in #X text)
-        self.hv_args: List = []
+        self.hv_args: list = []
 
         # the subpatch name of this graph
         # only used is this graph is actually a subpatch
         self.subpatch_name: Optional[str] = None
 
         # TODO(dromer) these are virtual attributes that are only instantiated with internal representation
-        self._PdGraph__connections: List[Connection] = []
-        self._PdGraph__pd_path: str = ""
+        self._PdGraph__connections: list[Connection] = []
+        self._PdGraph__pd_path: Path = Path()
 
     @property
     def dollar_zero(self) -> str:
@@ -72,7 +75,7 @@ class PdGraph(PdObject):
         else:
             return self.parent_graph.__pd_path == self.__pd_path if not self.is_root else False
 
-    def add_object(self, obj: PdObject) -> None:
+    def add_object(self, obj: PdObject) -> int:
         obj.parent_graph = self
         self.__objs.append(obj)
 
@@ -87,6 +90,8 @@ class PdGraph(PdObject):
             self.__outlet_objects.sort(key=lambda o: o.pos_x)
             for i, o in enumerate(self.__outlet_objects):
                 o.let_index = i
+
+        return (len(self.__objs) - 1)
 
     def add_parsed_connection(self, from_index: int, from_outlet: int, to_index: int, to_inlet: int) -> None:
         """ Add a connection to the graph which has been parsed externally.
@@ -116,7 +121,14 @@ class PdGraph(PdObject):
                            "Have all inlets and outlets been declared?",
                            NotificationEnum.ERROR_UNABLE_TO_CONNECT_OBJECTS)
 
-    def add_hv_arg(self, arg_index: int, name: str, value_type: str, default_value: str, required: bool) -> None:
+    def add_hv_arg(
+        self,
+        arg_index: int,
+        name: str,
+        value_type: str,
+        default_value: Optional[Any],
+        required: bool
+    ) -> None:
         """ Add a Heavy argument to the graph. Indicies are from zero (not one, like Pd).
         """
         # ensure that self.hv_args is big enough, as heavy arguments are not
@@ -131,6 +143,12 @@ class PdGraph(PdObject):
             "default": default_value,
             "required": required
         }
+
+    def get_object(self, obj_index: int) -> PdObject:
+        return self.__objs[obj_index]
+
+    def get_objects(self) -> list[PdObject]:
+        return self.__objs
 
     def get_inlet_connection_type(self, inlet_index: int) -> str:
         return self.__inlet_objects[inlet_index].get_inlet_connection_type(inlet_index)
@@ -154,7 +172,7 @@ class PdGraph(PdObject):
         for o in self.__objs:
             o.validate_configuration()
 
-    def is_abstraction_on_call_stack(self, abs_path: str) -> bool:
+    def is_abstraction_on_call_stack(self, abs_path: Path) -> bool:
         """ Returns True if the given abstraction name is already on the call
             stack (i.e. it is currently being parsed). This function is used to
             detect recursion within abstractions.
@@ -166,21 +184,21 @@ class PdGraph(PdObject):
         else:
             return False
 
-    def get_notices(self) -> Dict:
+    def get_notices(self) -> CompilerNotif:
         notices = PdObject.get_notices(self)
         for o in self.__objs:
             n = o.get_notices()
-            notices["warnings"].extend(n["warnings"])
-            notices["errors"].extend(n["errors"])
+            notices.warnings.extend(n.warnings)
+            notices.errors.extend(n.errors)
 
         # remove ERROR_EXCEPTION if there are already other errors.
         # The exception is always a result of some other error
-        if any((n["enum"] != NotificationEnum.ERROR_EXCEPTION) for n in notices["errors"]):
-            notices["errors"] = [n for n in notices["errors"] if n["enum"] != NotificationEnum.ERROR_EXCEPTION]
+        if any((n.enum != NotificationEnum.ERROR_EXCEPTION) for n in notices.errors):
+            notices.errors = [n for n in notices.errors if n.enum != NotificationEnum.ERROR_EXCEPTION]
 
         return notices
 
-    def get_graph_heirarchy(self) -> List:
+    def get_graph_heirarchy(self) -> list:
         """ Returns the "path" of this graph, indicating where it is in the
             graph heirarchy (i.e. with file names, etc.)
         """
@@ -203,22 +221,18 @@ class PdGraph(PdObject):
             # NOTE(dromer): we should never get here
             raise Exception("parent_graph argument is None")
 
-    def to_hv(self, export_args: bool = False) -> Dict:
+    def to_hv(self, export_args: bool = False) -> Heavy:
         # NOTE(mhroth): hv_args are not returned. Because all arguments have
         # been resolved, no arguments are otherwise passed. hv2ir would break
         # on required arguments that are not passed to the graph
         assert all(a is not None for a in self.hv_args), "Graph is missing a @hv_arg."
-        return {
-            "type": "graph",
-            "imports": [],
-            "args": self.hv_args if export_args else [],
-            "objects": {o.obj_id: o.to_hv() for o in self.__objs},
-            "connections": [c.to_hv() for c in self.__connections],
-            "properties": {
-                "x": self.pos_x,
-                "y": self.pos_y
-            }
-        }
+        return Heavy(
+            type="graph",
+            args=self.hv_args if export_args else [],
+            objects={o.obj_id: o.to_hv() for o in self.__objs},
+            connections=[c.to_hv() for c in self.__connections],
+            properties=HvPos(x=self.pos_x, y=self.pos_y)
+        )
 
     def __repr__(self) -> str:
-        return self.subpatch_name or os.path.basename(self.__pd_path)
+        return self.subpatch_name or self.__pd_path.name

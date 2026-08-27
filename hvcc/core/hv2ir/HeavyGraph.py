@@ -1,5 +1,5 @@
 # Copyright (C) 2014-2018 Enzien Audio, Ltd.
-# Copyright (C) 2023 Wasted Audio
+# Copyright (C) 2023-2026 Wasted Audio
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,10 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
 import re
+
 from collections import Counter
-from typing import Optional, Union, Dict, List
+from typing import Optional, Union, Dict, List, Set, Tuple
+from pathlib import Path
 
 from .BufferPool import BufferPool
 from .Connection import Connection
@@ -26,6 +27,13 @@ from .HeavyException import HeavyException
 from .HeavyIrObject import HeavyIrObject
 from .HIrReceive import HIrReceive
 from .HeavyLangObject import HeavyLangObject
+
+from hvcc.types.compiler import CompilerNotif
+from hvcc.types.IR import (
+    IRObjectdict, IRGraph, IRName, IRInit, IRControl, IRReceiver,
+    IRSendMessage, IROnMessage, IRSignalList, IRSignal, IRTable, IRNumTempBuffer,
+)
+from hvcc.types.Lang import LangLetType
 
 
 class HeavyGraph(HeavyIrObject):
@@ -38,7 +46,7 @@ class HeavyGraph(HeavyIrObject):
         self,
         graph: Optional['HeavyGraph'] = None,
         graph_args: Optional[Dict] = None,
-        file: str = "",
+        file: Path = Path(),
         xname: str = "heavy"
     ) -> None:
         # zero inlets and outlets until inlet/outlet objects are declared
@@ -314,7 +322,7 @@ class HeavyGraph(HeavyIrObject):
             # NOTE(dromer): we should never get here
             raise Exception
 
-    def find_path_for_abstraction(self, obj_type: str) -> Optional[str]:
+    def find_path_for_abstraction(self, obj_type: str) -> Optional[Path]:
         """ Travels up the graph heirarchy looking for a file path to an abstraction.
             Returns None if no abstraction is found.
         """
@@ -377,12 +385,12 @@ class HeavyGraph(HeavyIrObject):
         else:
             return self.output_channel_set
 
-    def get_notices(self) -> Dict:
+    def get_notices(self) -> CompilerNotif:
         notices = HeavyLangObject.get_notices(self)
         for o in self.objs.values():
             n = o.get_notices()
-            notices["warnings"].extend(n["warnings"])
-            notices["errors"].extend(n["errors"])
+            notices.warnings.extend(n.warnings)
+            notices.errors.extend(n.errors)
         return notices
 
     def get_objects_for_type(self, obj_type: str, recursive: bool = False) -> List:
@@ -460,8 +468,8 @@ class HeavyGraph(HeavyIrObject):
             self.assign_signal_buffers()
         except HeavyException as e:
             e.notes = self.get_notices()
-            e.notes["has_error"] = True
-            e.notes["exception"] = e
+            e.notes.has_error = True
+            e.notes.exception = e
             raise e
 
     def _remove_unused_inlet_connections(self) -> None:
@@ -480,7 +488,7 @@ class HeavyGraph(HeavyIrObject):
         for o in [o for o in self.objs.values() if (o.type == "__graph")]:
             o._remove_unused_inlet_connections()
 
-    def _resolved_outlet_type(self, outlet_index: int = 0) -> str:
+    def _resolved_outlet_type(self, outlet_index: int = 0) -> LangLetType:
         # a graph's outlet type depends on the connections incident on the
         # corresponding outlet object
         connection_type_set = {c.type for c in self.outlet_objs[outlet_index].inlet_connections[0]}
@@ -492,7 +500,7 @@ class HeavyGraph(HeavyIrObject):
             raise HeavyException(f"{self} has multiple incident connections of differing type.\
                                   The outlet type cannot be explicitly resolved.")
 
-    def _resolve_connection_types(self, obj_stack: Optional[set] = None) -> Optional[None]:
+    def _resolve_connection_types(self, obj_stack: Optional[set] = None) -> None:
         """ Resolves the type of all connections before reduction to IR object types.
             If connections incident on an object are incompatible, they are either
             resolved, potentially by inserting conversion objects, or pruned.
@@ -595,7 +603,7 @@ class HeavyGraph(HeavyIrObject):
             for o in r_list:
                 o.graph.remove_object(o)
 
-    def reduce(self) -> tuple:
+    def reduce(self) -> Tuple[Set, List]:
         """ Breaks this object into low-level objects. This method returns either
             the object that it is called on, or a graph. In case of a graph, it contains
             only low-level objects. Unnecessary connections are pruned. Because
@@ -850,15 +858,15 @@ class HeavyGraph(HeavyIrObject):
     def __repr__(self) -> str:
         if self.xname is not None:
             # TODO(mhroth): does not handle nested subgraph
-            return f"__graph.{self.id}({os.path.basename(self.file)}/{self.xname})"
+            return f"__graph.{self.id}({self.file.name}/{self.xname})"
         else:
-            return f"__graph.{self.id}({os.path.basename(self.file)})"
+            return f"__graph.{self.id}({self.file.name})"
 
     #
     # Intermediate Representation generators
     #
 
-    def to_ir(self) -> Optional[Dict]:
+    def to_ir(self) -> Optional[IRGraph]:
         """ Returns Heavy intermediate representation.
         """
 
@@ -867,35 +875,35 @@ class HeavyGraph(HeavyIrObject):
         output_channel_set = self.get_output_channel_set(recursive=True)
 
         if self.buffer_pool is not None:
-            return {
-                "name": {
-                    "escaped": re.sub(r"\W", "_", self.xname),
-                    "display": self.xname
-                },
-                "objects": self.get_object_dict(),
-                "init": {
-                    "order": self.get_ir_init_list()
-                },
-                "tables": self.get_ir_table_dict(),
-                "control": {
-                    "receivers": self.get_ir_receiver_dict(),
-                    "sendMessage": self.get_ir_control_list()
-                },
-                "signal": {
-                    "numInputBuffers": max(input_channel_set) if len(input_channel_set) > 0 else 0,
-                    "numOutputBuffers": max(output_channel_set) if len(output_channel_set) > 0 else 0,
-                    "numTemporaryBuffers": {
-                        "float": self.buffer_pool.num_buffers("~f>"),
-                        "integer": self.buffer_pool.num_buffers("~i>")
-                    },
-                    "processOrder": self.get_ir_signal_list()
-                }
-            }
+            return IRGraph(
+                name=IRName(
+                    escaped=re.sub(r"\W", "_", self.xname),
+                    display=self.xname
+                ),
+                objects=self.get_object_dict(),
+                init=IRInit(
+                    order=self.get_ir_init_list()
+                ),
+                tables=self.get_ir_table_dict(),
+                control=IRControl(
+                    receivers=self.get_ir_receiver_dict(),
+                    sendMessage=self.get_ir_control_list()
+                ),
+                signal=IRSignal(
+                    numInputBuffers=max(input_channel_set) if len(input_channel_set) > 0 else 0,
+                    numOutputBuffers=max(output_channel_set) if len(output_channel_set) > 0 else 0,
+                    numTemporaryBuffers=IRNumTempBuffer(
+                        float=self.buffer_pool.num_buffers("~f>"),
+                        integer=self.buffer_pool.num_buffers("~i>")
+                    ),
+                    processOrder=self.get_ir_signal_list()
+                )
+            )
         else:
             # we should never get here
             raise Exception
 
-    def get_object_dict(self) -> Dict:
+    def get_object_dict(self) -> Dict[str, IRObjectdict]:
         # d = {o.id: o.get_object_dict() for o in self.objs.values() if o.type not in
         # ["inlet", "__inlet", "outlet", "__outlet"]}
         d = {}
@@ -905,20 +913,20 @@ class HeavyGraph(HeavyIrObject):
                 d.update(o.get_object_dict())
         return d
 
-    def get_ir_init_list(self) -> List:
+    def get_ir_init_list(self) -> List[str]:
         """ Init list is returned with all signal objects at the front,
             in the order that they are processed. This is to reduce cache misses
             on the signal object state as the process function is executed.
         """
         init_list = [x for o in self.objs.values() for x in o.get_ir_init_list()]
         signal_list = self.get_ir_signal_list()
-        s_init_list = [x["id"] for x in signal_list if x["id"] in init_list]
+        s_init_list = [x.id for x in signal_list if x.id in init_list]
         i_init_list = [o_id for o_id in init_list if o_id not in s_init_list]
         ordered_init_list = s_init_list + i_init_list
         # ordered_init_list = list(OrderedDict.fromkeys(s_init_list + i_init_list))
         return ordered_init_list
 
-    def get_ir_on_message(self, inlet_index: int = 0) -> List:
+    def get_ir_on_message(self, inlet_index: int = 0) -> List[IROnMessage]:
         # pass the method through the inlet object, but only follow control connections
         x = []
         for c in self.inlet_objs[inlet_index].outlet_connections[0]:
@@ -926,7 +934,7 @@ class HeavyGraph(HeavyIrObject):
                 x.extend(c.to_object.get_ir_on_message(c.inlet_index))
         return x
 
-    def get_ir_table_dict(self) -> Dict:
+    def get_ir_table_dict(self) -> Dict[str, IRTable]:
         """ Returns a dictionary of all publicly visible tables at the root graph
             and their ids.
         """
@@ -941,29 +949,29 @@ class HeavyGraph(HeavyIrObject):
             # escape table key to be used as the value for code stubs
             key = (f"_{k}") if re.match(r"\d", k) else k
             if key not in e:
-                e[key] = {
-                    "id": v[0].id,
-                    "display": k,
-                    "hash": f"0x{HeavyLangObject.get_hash(k):X}",
-                    "extern": v[0].args["extern"]
-                }
+                e[key] = IRTable(
+                    id=v[0].id,
+                    display=k,
+                    hash=f"0x{HeavyLangObject.get_hash(k):X}",
+                    extern=v[0].args["extern"]
+                )
         return e
 
-    def get_ir_control_list(self) -> List:
+    def get_ir_control_list(self) -> List[IRSendMessage]:
         return [x for o in self.objs.values() for x in o.get_ir_control_list()]
 
-    def get_ir_receiver_dict(self) -> Dict:
+    def get_ir_receiver_dict(self) -> Dict[str, IRReceiver]:
         # NOTE(mhroth): this code assumes that v is always an array of length 1,
         # as the grouping of control receivers should have grouped all same-named
         # receivers into one logical receiver.
         # NOTE(mhroth): a code-compatible name is only necessary for externed receivers
-        return {((f"_{k}") if re.match(r"\d", k) else k): {
-            "display": k,
-            "hash": f"0x{HeavyLangObject.get_hash(k):X}",
-            "extern": v[0].args["extern"],
-            "attributes": v[0].args["attributes"],
-            "ids": [v[0].id]
-        } for k, v in self.local_vars.get_registered_objects_for_type("__receive").items()}
+        return {((f"_{k}") if re.match(r"\d", k) else k): IRReceiver(
+            display=k,
+            hash=f"0x{HeavyLangObject.get_hash(k):X}",
+            extern=v[0].args["extern"],
+            attributes=v[0].args["attributes"],
+            ids=[v[0].id]
+        ) for k, v in self.local_vars.get_registered_objects_for_type("__receive").items()}
 
-    def get_ir_signal_list(self) -> List:
+    def get_ir_signal_list(self) -> List[IRSignalList]:
         return [x for o in self.signal_order for x in o.get_ir_signal_list()]

@@ -1,5 +1,5 @@
 # Copyright (C) 2014-2018 Enzien Audio, Ltd.
-# Copyright (C) 2023 Wasted Audio
+# Copyright (C) 2023-2026 Wasted Audio
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,11 +16,14 @@
 
 import argparse
 import json
-import os
 import time
-from typing import Dict, List, Optional
+
+from typing import List, Optional
+from pathlib import Path
 
 from hvcc.interpreters.pd2hv.PdParser import PdParser
+from hvcc.types.compiler import CompilerResp, CompilerNotif
+from .PdGraph import PdGraph
 
 
 class Colours:
@@ -45,12 +48,12 @@ class pd2hv:
     @classmethod
     def compile(
         cls,
-        pd_path: str,
-        hv_dir: str,
+        pd_path: Path,
+        hv_dir: Path,
         search_paths: Optional[List] = None,
         verbose: bool = False,
         export_args: bool = False
-    ) -> Dict:
+    ) -> CompilerResp:
 
         tick = time.time()
 
@@ -59,57 +62,47 @@ class pd2hv:
             for p in search_paths:
                 parser.add_absolute_search_directory(p)
 
-        pd_graph = parser.graph_from_file(pd_path)
+        pd_graph: PdGraph = parser.graph_from_file(pd_path)
         notices = pd_graph.get_notices()
 
         # check for errors
-        if len(notices["errors"]) > 0:
-            return {
-                "stage": "pd2hv",
-                "obj_counter": dict(parser.obj_counter),
-                "notifs": {
-                    "has_error": True,
-                    "exception": None,
-                    "errors": notices["errors"],
-                    "warnings": notices["warnings"]
-                },
-                "in_dir": os.path.dirname(pd_path),
-                "in_file": os.path.basename(pd_path),
-                "out_dir": None,
-                "out_file": None,
-                "compile_time": (time.time() - tick)
-            }
+        if len(notices.errors) > 0:
+            return CompilerResp(
+                stage="pd2hv",
+                obj_counter=parser.obj_counter,
+                notifs=CompilerNotif(
+                    has_error=True,
+                    errors=notices.errors,
+                    warnings=notices.warnings
+                ),
+                in_dir=pd_path.parent,
+                in_file=pd_path,
+                compile_time=(time.time() - tick)
+            )
 
-        if not os.path.exists(hv_dir):
-            os.makedirs(hv_dir)
+        if not hv_dir.exists():
+            hv_dir.mkdir(parents=True)
 
-        hv_file = f"{os.path.splitext(os.path.basename(pd_path))[0]}.hv.json"
-        hv_path = os.path.join(hv_dir, hv_file)
+        hv_file = f"{pd_path.stem}.hv.json"
+        hv_path = Path(hv_dir, hv_file)
         with open(hv_path, "w") as f:
-            if verbose:
-                json.dump(pd_graph.to_hv(export_args=export_args),
-                          f,
-                          sort_keys=True,
-                          indent=2,
-                          separators=(",", ": "))
-            else:
-                json.dump(pd_graph.to_hv(export_args=export_args), f)
+            json.dump(
+                pd_graph.to_hv(export_args=export_args).model_dump(by_alias=True, mode='json'),
+                f, indent=4
+            )
 
-        return {
-            "stage": "pd2hv",
-            "obj_counter": dict(parser.obj_counter),
-            "notifs": {
-                "has_error": False,
-                "exception": None,
-                "errors": notices["errors"],
-                "warnings": notices["warnings"]
-            },
-            "in_dir": os.path.dirname(pd_path),
-            "in_file": os.path.basename(pd_path),
-            "out_dir": hv_dir,
-            "out_file": hv_file,
-            "compile_time": (time.time() - tick)
-        }
+        return CompilerResp(
+            stage="pd2hv",
+            obj_counter=parser.obj_counter,
+            notifs=CompilerNotif(
+                warnings=notices.warnings
+            ),
+            in_dir=pd_path.parent,
+            in_file=pd_path,
+            out_dir=hv_dir,
+            out_file=Path(hv_file),
+            compile_time=(time.time() - tick)
+        )
 
 
 def main() -> None:
@@ -132,8 +125,8 @@ def main() -> None:
         action="count")
     args = parser.parse_args()
 
-    args.pd_path = os.path.abspath(os.path.expanduser(args.pd_path))
-    args.hv_dir = os.path.abspath(os.path.expanduser(args.hv_dir))
+    args.pd_path = Path(args.pd_path).expanduser().absolute()
+    args.hv_dir = Path(args.hv_dir).expanduser().absolute()
 
     result = pd2hv.compile(
         pd_path=args.pd_path,
@@ -142,25 +135,25 @@ def main() -> None:
         verbose=args.verbose,
         export_args=args.export)
 
-    for i, n in enumerate(result["notifs"]["errors"]):
+    for i, n in enumerate(result.notifs.errors):
         print("{0:3d}) {1}Error #{2:4d}:{3} {4}".format(
             i + 1,
             Colours.red,
-            n["enum"],
+            n.enum,
             Colours.end,
-            n["message"]))
-    for i, n in enumerate(result["notifs"]["warnings"]):
+            n.message))
+    for i, n in enumerate(result.notifs.warnings):
         print("{0:3d}) {1}Warning #{2:4d}:{3} {4}".format(
             i + 1,
             Colours.yellow,
-            n["enum"],
+            n.enum,
             Colours.end,
-            n["message"]))
+            n.message))
 
     if args.verbose:
-        if len(result["notifs"]["errors"]) == 0:
-            print("Heavy file written to", os.path.join(result["out_dir"], result["out_file"]))
-        print("Total pd2hv compile time: {0:.2f}ms".format(result["compile_time"] * 1000))
+        if len(result.notifs.errors) == 0:
+            print("Heavy file written to", Path(result.out_dir, result.out_file))
+        print("Total pd2hv compile time: {0:.2f}ms".format(result.compile_time * 1000))
 
 
 if __name__ == "__main__":

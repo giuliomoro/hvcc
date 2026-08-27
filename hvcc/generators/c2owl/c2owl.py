@@ -1,43 +1,47 @@
-# import datetime
-import os
 import shutil
 import time
 import jinja2
 import json
-from typing import Dict, List, Optional
-from ..buildjson import buildjson
-from ..copyright import copyright_manager
+
+from typing import List, Optional
+from pathlib import Path
 
 import hvcc.core.hv2ir.HeavyLangObject as HeavyLangObject
+from ..copyright import copyright_manager
+
+from hvcc.interpreters.pd2hv.NotificationEnum import NotificationEnum
+from hvcc.types.compiler import Generator, CompilerResp, CompilerNotif, CompilerMsg, ExternInfo
+from hvcc.types.meta import Meta
+from hvcc.types.IR import IRGraph
 
 
 heavy_hash = HeavyLangObject.HeavyLangObject.get_hash
-OWL_BUTTONS = ['Push', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']
+OWL_BUTTONS = ['Push', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'Red', 'Green']
 
 
-class c2owl:
+class c2owl(Generator):
     """ Generates a OWL wrapper for a given patch.
     """
 
     @classmethod
-    def make_jdata(cls, patch_ir: str) -> List:
+    def make_jdata(cls, patch_ir: Path) -> List:
         jdata = list()
 
         with open(patch_ir, mode="r") as f:
-            ir = json.load(f)
+            ir = IRGraph(**json.load(f))
 
-            for name, v in ir['control']['receivers'].items():
+            for name, recv in ir.control.receivers.items():
                 # skip __hv_init and similar
                 if name.startswith("__"):
                     continue
 
                 # If a name has been specified
-                if v['attributes'].get('raw'):
-                    key = v['attributes']['raw']
+                if recv.attributes.get('raw'):
+                    key = recv.attributes['raw']
                     jdata.append((key, name, 'RECV', f"0x{heavy_hash(name):X}",
-                                  v['attributes']['min'],
-                                  v['attributes']['max'],
-                                  v['attributes']['default'],
+                                  recv.attributes['min'],
+                                  recv.attributes['max'],
+                                  recv.attributes['default'],
                                   key in OWL_BUTTONS))
 
                 elif name.startswith('Channel-'):
@@ -45,16 +49,16 @@ class c2owl:
                     jdata.append((key, name, 'RECV', f"0x{heavy_hash(name):X}",
                                   0, 1, None, key in OWL_BUTTONS))
 
-            for k, v in ir['objects'].items():
+            for _, obj in ir.objects.items():
                 try:
-                    if v['type'] == '__send':
-                        name = v['args']['name']
-                        if v['args']['attributes'].get('raw'):
-                            key = v['args']['attributes']['raw']
+                    if obj.type == '__send':
+                        name = obj.args['name']
+                        if obj.args['attributes'].get('raw'):
+                            key = obj.args['attributes']['raw']
                             jdata.append((key, f'{name}>', 'SEND', f"0x{heavy_hash(name):X}",
-                                          v['args']['attributes']['min'],
-                                          v['args']['attributes']['max'],
-                                          v['args']['attributes']['default'],
+                                          obj.args['attributes']['min'],
+                                          obj.args['attributes']['max'],
+                                          obj.args['attributes']['default'],
                                           key in OWL_BUTTONS))
                         elif name.startswith('Channel-'):
                             key = name.split('Channel-', 1)[1]
@@ -68,113 +72,81 @@ class c2owl:
     @classmethod
     def compile(
         cls,
-        c_src_dir: str,
-        out_dir: str,
-        externs: Dict,
-        patch_name: Optional[str] = None,
-        patch_meta: Optional[Dict] = None,
+        c_src_dir: Path,
+        out_dir: Path,
+        externs: ExternInfo,
+        patch_name: str,
+        patch_meta: Meta = Meta(),
         num_input_channels: int = 0,
         num_output_channels: int = 0,
         copyright: Optional[str] = None,
         verbose: Optional[bool] = False
-    ) -> Dict:
+    ) -> CompilerResp:
 
         tick = time.time()
 
-        out_dir = os.path.join(out_dir, "Source")
+        out_dir = Path(out_dir, "Source")
         patch_name = patch_name or "heavy"
         copyright_c = copyright_manager.get_copyright_for_c(copyright)
 
         try:
             # ensure that the output directory does not exist
-            out_dir = os.path.abspath(out_dir)
-            if os.path.exists(out_dir):
+            out_dir = out_dir.absolute()
+            if out_dir.exists():
                 shutil.rmtree(out_dir)
 
             # copy over generated C source files
             shutil.copytree(c_src_dir, out_dir)
 
             # copy over deps
-            shutil.copytree(os.path.join(os.path.dirname(__file__), "deps"), out_dir, dirs_exist_ok=True)
+            shutil.copytree(Path(Path(__file__).parent, "deps"), out_dir, dirs_exist_ok=True)
 
             # initialize the jinja template environment
             env = jinja2.Environment()
 
-            env.loader = jinja2.FileSystemLoader(
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
+            env.loader = jinja2.FileSystemLoader(Path(__file__).parent / "templates")
 
             # construct jdata from ir
-            ir_dir = os.path.join(c_src_dir, "../ir")
-            patch_ir = os.path.join(ir_dir, f"{patch_name}.heavy.ir.json")
+            ir_dir = Path(c_src_dir, "../ir")
+            patch_ir = Path(ir_dir, f"{patch_name}.heavy.ir.json")
             jdata = cls.make_jdata(patch_ir)
 
             # generate OWL wrapper from template
-            owl_hpp_path = os.path.join(out_dir, f"HeavyOWL_{patch_name}.hpp")
+            owl_hpp_path = Path(out_dir, f"HeavyOWL_{patch_name}.hpp")
             with open(owl_hpp_path, "w") as f:
                 f.write(env.get_template("HeavyOwl.hpp").render(
                     jdata=jdata,
                     name=patch_name,
                     copyright=copyright_c))
-            owl_h_path = os.path.join(out_dir, "HeavyOwlConstants.h")
+            owl_h_path = Path(out_dir, "HeavyOwlConstants.h")
             with open(owl_h_path, "w") as f:
                 f.write(env.get_template("HeavyOwlConstants.h").render(
                     jdata=jdata,
                     copyright=copyright_c))
 
-            # generate list of Heavy source files
-            # files = os.listdir(out_dir)
-
             # ======================================================================================
-            # Linux
-            #
-            # linux_path = os.path.join(out_dir, "linux")
-            # os.makedirs(linux_path)
 
-            # with open(os.path.join(out_dir, "Makefile"), "w") as f:
-            #     f.write(env.get_template("Makefile").render(
-            #         name=patch_name,
-            #         class_name=f"HeavyOWL_{patch_name}"))
-
-            buildjson.generate_json(
-                out_dir,
-                linux_x64_args=["-j"])
-            # macos_x64_args=["-project", "{0}.xcodeproj".format(patch_name), "-arch",
-            #                 "x86_64", "-alltargets"],
-            # win_x64_args=["/property:Configuration=Release", "/property:Platform=x64",
-            #               "/t:Rebuild", "{0}.sln".format(patch_name), "/m"],
-            # win_x86_args=["/property:Configuration=Release", "/property:Platform=x86",
-            #               "/t:Rebuild", "{0}.sln".format(patch_name), "/m"])
-
-            return {
-                "stage": "c2owl",
-                "notifs": {
-                    "has_error": False,
-                    "exception": None,
-                    "warnings": [],
-                    "errors": []
-                },
-                "in_dir": c_src_dir,
-                "in_file": "",
-                "out_dir": out_dir,
-                "out_file": os.path.basename(owl_h_path),
-                "compile_time": time.time() - tick
-            }
+            return CompilerResp(
+                stage="c2owl",
+                in_dir=c_src_dir,
+                out_dir=out_dir,
+                out_file=owl_h_path,
+                compile_time=time.time() - tick
+            )
 
         except Exception as e:
-            return {
-                "stage": "c2owl",
-                "notifs": {
-                    "has_error": True,
-                    "exception": e,
-                    "warnings": [],
-                    "errors": [{
-                        "enum": -1,
-                        "message": str(e)
-                    }]
-                },
-                "in_dir": c_src_dir,
-                "in_file": "",
-                "out_dir": out_dir,
-                "out_file": "",
-                "compile_time": time.time() - tick
-            }
+            return CompilerResp(
+                stage="c2owl",
+                notifs=CompilerNotif(
+                    has_error=True,
+                    exception=e,
+                    warnings=[],
+                    errors=[CompilerMsg(
+                        enum=NotificationEnum.ERROR_EXCEPTION,
+                        message=str(e)
+                    )]
+                ),
+                in_dir=c_src_dir,
+                out_dir=out_dir,
+                compile_time=time.time() - tick
+            )

@@ -1,5 +1,5 @@
 # Copyright (C) 2014-2018 Enzien Audio, Ltd.
-# Copyright (C) 2023 Wasted Audio
+# Copyright (C) 2023-2024 Wasted Audio
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,6 +17,8 @@
 from typing import Dict, List
 
 from .HeavyObject import HeavyObject
+
+from hvcc.types.IR import IRSignalList
 
 
 class SignalMath(HeavyObject):
@@ -48,6 +50,7 @@ class SignalMath(HeavyObject):
         "__tanh~f": "__hv_tanh_f",
         "__atanh~f": "__hv_atanh_f",
         "__exp~f": "__hv_exp_f",
+        "__exc_or~f": "__hv_exc_or_f",
         "__pow~f": "__hv_pow_f",
         "__pow~i": "__hv_pow_i",
         "__sqrt~f": "__hv_sqrt_f",
@@ -67,6 +70,7 @@ class SignalMath(HeavyObject):
         "__lt~i": "__hv_lt_i",
         "__lte~f": "__hv_lte_f",
         "__lte~i": "__hv_lte_i",
+        "__eq~f": "__hv_eq_f",
         "__neq~f": "__hv_neq_f",
         "__fma~f": "__hv_fma_f",
         "__fms~f": "__hv_fms_f",
@@ -74,9 +78,13 @@ class SignalMath(HeavyObject):
         "__ceil~f": "__hv_ceil_f",
         "__cast~fi": "__hv_cast_fi",
         "__cast~if": "__hv_cast_if",
-        "__and~f": "__hv_and_f",  # binary and
-        "__andnot~f": "__hv_andnot_f",
-        "__or~f": "__hv_or_f",  # binary or
+        "__and~f": "__hv_and_f",            # binary and
+        "__andnot~f": "__hv_andnot_f",      # binary andnot
+        "__or~f": "__hv_or_f",              # binary or
+        "__bitsafe~f": "__hv_bitsafe_f",    # make inf and nan safe
+        "__bit_or~f": "__hv_bit_or_f",      # bitwise or
+        "__bit_and~f": "__hv_bit_and_f",    # bitwise and
+        "__bit_not~f": "__hv_bit_not_f",    # bitwise not
     }
 
     @classmethod
@@ -90,14 +98,14 @@ class SignalMath(HeavyObject):
         return {"HvMath.h"}
 
     @classmethod
-    def get_C_process(cls, process_dict: Dict, obj_type: str, obj_id: int, args: Dict) -> List[str]:
+    def get_C_process(cls, process_dict: IRSignalList, obj_type: str, obj_id: str, args: Dict) -> List[str]:
         return [
             "{0}({1}, {2});".format(
                 cls.__OPERATION_DICT[obj_type],
                 ", ".join(["VI{0}({1})".format(
-                    "i" if b["type"] == "~i>" else "f",
-                    cls._c_buffer(b)) for b in process_dict["inputBuffers"]]),
+                    "i" if b.type == "~i>" else "f",
+                    cls._c_buffer(b)) for b in process_dict.inputBuffers]),
                 ", ".join(["VO{0}({1})".format(
-                    "i" if b["type"] == "~i>" else "f",
-                    cls._c_buffer(b)) for b in process_dict["outputBuffers"]])
+                    "i" if b.type == "~i>" else "f",
+                    cls._c_buffer(b)) for b in process_dict.outputBuffers])
             )]

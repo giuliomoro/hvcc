@@ -14,18 +14,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from typing import Optional, List, Dict
+from typing import Optional
 
 from .NotificationEnum import NotificationEnum
 from .PdObject import PdObject
 from .PdRaw import parse_pd_raw_args, PdRawException
+
+from hvcc.types.Heavy import Heavy, HvPos
 
 
 class PdSendObject(PdObject):
     def __init__(
         self,
         obj_type: str,
-        obj_args: Optional[List] = None,
+        obj_args: Optional[list] = None,
         pos_x: int = 0,
         pos_y: int = 0
     ) -> None:
@@ -34,7 +36,7 @@ class PdSendObject(PdObject):
 
         self.__send_name = ""
         self.__extern_type = None
-        self.__attributes = {}
+        self.__attributes: dict = {}
 
         try:
             # send objects don't necessarily need to have a name
@@ -48,6 +50,37 @@ class PdSendObject(PdObject):
                     self.__extern_type = "event"
         except Exception:
             pass
+
+        if self.__extern_type == "param":
+            try:
+                self.__attributes = {
+                    "min": 0.0,
+                    "max": 1.0,
+                    "default": 0.5,
+                    "type": "float"
+                }
+                self.__attributes["min"] = float(self.obj_args[2])
+                self.__attributes["max"] = float(self.obj_args[3])
+                self.__attributes["default"] = float(self.obj_args[4])
+                self.__attributes["type"] = str(self.obj_args[5])
+            except ValueError:
+                self.add_warning(
+                    f"Minimum, maximum, and default values for Parameter {self.__send_name}  must be numbers.")
+            except Exception:
+                pass
+
+            if not (self.__attributes["min"] <= self.__attributes["default"]):
+                self.add_error("Default parameter value is less than the minimum. "
+                               "Send will not be exported: {0:g} < {1:g}".format(
+                                   self.__attributes["default"],
+                                   self.__attributes["min"]))
+                self.__extern_type = None
+            if not (self.__attributes["default"] <= self.__attributes["max"]):
+                self.add_error("Default parameter value is greater than the maximum. "
+                               "Send will not be exported: {0:g} > {1:g}".format(
+                                   self.__attributes["default"],
+                                   self.__attributes["max"]))
+                self.__extern_type = None
 
         if '@raw' in self.obj_args or '@owl' in self.obj_args:  # TODO(dromer): deprecate @owl on next stable release
             try:
@@ -74,7 +107,7 @@ class PdSendObject(PdObject):
                 "are not supported. A name should be given.",
                 NotificationEnum.ERROR_MISSING_REQUIRED_ARGUMENT)
 
-    def to_hv(self) -> Dict:
+    def to_hv(self) -> Heavy:
         # note: control rate send/receive objects should not modify their name argument
         names = {
             "s": "",
@@ -84,18 +117,15 @@ class PdSendObject(PdObject):
             "throw~": "thrwctch_sig_"
         }
 
-        return {
-            "type": "send",
-            "args": {
-                "name": names[self.obj_type] + self.__send_name,
+        return Heavy(
+            type="send",
+            args={
+                "name": f"{names[self.obj_type]}{self.__send_name}",
                 "extern": self.__extern_type,
                 "attributes": self.__attributes,
             },
-            "properties": {
-                "x": self.pos_x,
-                "y": self.pos_y
-            },
-            "annotations": {
+            properties=HvPos(x=self.pos_x, y=self.pos_y),
+            annotations={
                 "scope": "public"
             }
-        }
+        )

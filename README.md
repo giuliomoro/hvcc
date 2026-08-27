@@ -1,6 +1,8 @@
 # Heavy Compiler Collection (hvcc)
 
-[![Build Status](https://github.com/Wasted-Audio/hvcc/actions/workflows/build.yml/badge.svg)](https://github.com/Wasted-Audio/hvcc/actions)
+[![Build Status](https://github.com/Wasted-Audio/hvcc/actions/workflows/ci.yml/badge.svg)](https://github.com/Wasted-Audio/hvcc/actions)
+[![pypi](https://img.shields.io/pypi/v/hvcc.svg)](https://pypi.python.org/pypi/hvcc)
+[![python](https://img.shields.io/pypi/pyversions/hvcc.svg)](https://pypi.python.org/pypi/hvcc)
 
 `hvcc` is a python-based dataflow audio programming language compiler that generates C/C++ code and a variety of specific framework wrappers.
 
@@ -12,28 +14,67 @@ The goal was to leverage Pure Data as a design interface and statically interpre
 
 It has since then been expanded to provide further support for many different platforms and frameworks, targeting game audio design, daw plugins and embedded production tools. In 2021 Wasted Audio took over maintenance of the project.
 
+## Documentation
+
+- [Introduction](docs/getting-started/index.md)
+  - [What is heavy?](docs/getting-started/index.md#what-is-heavy)
+  - [Supported patch formats](docs/getting-started/index.md#supported-patch-formats)
+  - [Supported platforms](docs/getting-started/index.md#supported-platforms)
+  - [Supported frameworks](docs/getting-started/index.md#supported-frameworks)
+  - [Licensing](docs/getting-started/index.md#licensing)
+- [Getting Started](docs/getting-started/patching.md)
+- [Generators](docs/generators/index.md)
+- [MIDI](docs/reference/midi.md)
+- [C API](docs/reference/c.md)
+- [C++ API](docs/reference/cpp.md)
+- [Heavy Lang Info](docs/reference/ir/heavy_lang.md)
+- [Heavy IR Info](docs/reference/ir/heavy_ir.md)
+- [Heavy GUI IR Info](docs/reference/ir/heavy_gui_ir.md)
+- [Supported vanilla objects](docs/reference/objects/supported.md)
+- [Unsupported vanilla objects](docs/reference/objects/unsupported.md)
+
+## Integrations
+
+hvcc has been integrated into several projects and services. This allows to easily compile patches without having to install hvcc manually.
+
+- [plugdata](https://plugdata.org/) - Modern interface for Pure Data. Includes a full cross-platform toolchain and targets Daisy, DPF and PD Externals.
+- [mod-cloud-builder](https://github.com/moddevices/mod-cloud-builder) - Online service for building LV2 plugins for the MOD platform.
+- [OWL Patch Library](https://www.rebeltech.org/patch-library) - Online service for building OWL plugins (uses an old fork).
+
 ## Requirements
 
-* python 3.7 or higher
-  * `jinja2` (for generator templating)
-  * `importlib_resources` (for reading static resources)
-  * `json2daisy` (for daisy integration)
-  * `tox` (for tests, optional)
-  * `clang/clang++` (for building tests, optional)
+Python 3.9 up to 3.14
+
+- `jinja2` (for generator templating)
+- `pydantic` (for data types)
+- `pydantic-extra-types` (for data types)
+- `arpeggio` (for `expr~` translation)
+
+For tests:
+
+- `tox` (python install)
+- `numpy/scipy` (dev dependencies)
+- `midifile` (git submodule)
+- `tinywav` (git submodule)
+- `clang/clang++` (system install)
 
 ## Installation
 
 hvcc is available from pypi.org and can be installed using python3 pip:
 
-`$ pip3 install hvcc`
+```sh
+pip3 install hvcc
+```
 
 If you want to develop hvcc you can install it from the source directory:
 
-`$ git clone https://github.com/Wasted-Audio/hvcc.git`
+```sh
+git clone https://github.com/Wasted-Audio/hvcc.git
+cd hvcc/
+pip3 install -e .
+```
 
-`$ cd hvcc/`
-
-`$ pip3 install -e .`
+Also review our [Contribution Guide](CONTRIBUTING.md) before opening a pull request.
 
 ## Usage
 
@@ -41,13 +82,15 @@ If you want to develop hvcc you can install it from the source directory:
 
 Generate a C/C++ program from `input.pd` and place the files in `~/myProject/`
 
-`$ hvcc ~/myProject/_main.pd`
+```sh
+hvcc ~/myProject/_main.pd
+```
 
 This command will generate the following directories:
 
-* `~/myProject/hv` heavylang representation of the input pd patch(es)
-* `~/myProject/ir` heavyir representation of the heavylang patch
-* `~/myProject/c` final generated C/C++ source files (this is what you would use in your project)
+- `~/myProject/hv` heavylang representation of the input pd patch(es)
+- `~/myProject/ir` heavyir representation of the heavylang patch
+- `~/myProject/c` final generated C/C++ source files (this is what you would use in your project)
 
 ### `-o` Select output directory
 
@@ -57,7 +100,9 @@ The `-o` or `--out_dir` parameter will specify where the output files are placed
 
 For example:
 
-`$ hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/`
+```sh
+hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/
+```
 
 Will place all the generated files in `~/Desktop/somewhere/else/`.
 
@@ -65,7 +110,9 @@ Will place all the generated files in `~/Desktop/somewhere/else/`.
 
 The `-n` or `--name` parameter can be used to easily namespace the generated code so that there are no conflicts when integrating multiple patches into the same project.
 
-`$ hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth`
+```sh
+hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth
+```
 
 ### `-g` Generators
 
@@ -73,15 +120,19 @@ Once `hvcc` has generated internal information about the patch the `-g` or `--ge
 
 For example:
 
-`$ hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth -g unity`
+```sh
+hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth -g unity
+```
 
 Will also generate a `unity` section in the output directory contain all the build projects and source files to compile a Unity plugin.
 
 It is also possible to pass a list of generators:
 
-`$ hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth -g unity wwise js`
+```sh
+hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth -g unity wwise js
+```
 
-A list of available generator options can be found [here](/docs/03.generators.md)
+A list of available generator options can be found [here](docs/generators/index.md)
 
 ### `-p` Search Paths
 
@@ -91,7 +142,9 @@ This can be handy when using a third-party patch library like [heavylib](https:/
 
 Simply append any folder paths after the `-p` flag like so:
 
-`$ hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth -p ~/Workspace/Projects/Enzien/heavylib/ ~/Desktop/myLib/`
+```sh
+hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth -p ~/Workspace/Projects/Enzien/heavylib/ ~/Desktop/myLib/
+```
 
 ### `-m` Meta Data
 
@@ -105,40 +158,33 @@ By default all the generated source files via `hvcc` will have the following cop
 
 This can be changed with `--copyright` parameter
 
-`$ hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth --copyright "Copyright (c) Los Pollos Hermanos 2019"`
+```sh
+hvcc ~/myProject/_main.pd -o ~/Desktop/somewhere/else/ -n mySynth --copyright "Copyright (c) Los Pollos Hermanos 2019"
+```
 
 ### `--help`
 
 Displays all the available parameters and options for hvcc.
 
-## Documentation
-
-* [Introduction](/docs/01.introduction.md)
-  * [What is heavy?](/docs/01.introduction.md#what-is-heavy)
-  * [Supported patch formats](/docs/01.introduction.md#supported-patch-formats)
-  * [Supported platforms](/docs/01.introduction.md#supported-platforms)
-  * [Supported frameworks](/docs/01.introduction.md#supported-frameworks)
-  * [Licensing](/docs/01.introduction.md#licensing)
-* [Getting Started](/docs/02.getting_started.md)
-* [Generators](/docs/03.generators.md)
-* [MIDI](/docs/04.midi.md)
-* [C API](/docs/05.c.md)
-* [C++ API](/docs/06.cpp.md)
-* [Heavy Lang Info](/docs/07.heavy_lang.md)
-* [Heavy IR Info](/docs/08.heavy_ir_lang.md)
-* [Supported vanilla objects](/docs/09.supported_vanilla_objects.md)
-* [Unsupported vanilla objects](/docs/10.unsupported_vanilla_objects.md)
-
 ## Contact
+
+The Heavy community aims to be safe and inclusive, please read our [Code of Conduct](CODE_OF_CONDUCT.md) before engaging.
 
 There are several places where heavy/hvcc conversation is happening:
 
-* [Discord](https://discord.gg/fmxJveg)
-* [IRC](https://web.libera.chat/#hvcc)
-* A number of forums:
-  * [Bela](https://forum.bela.io/?q=hvcc)
-  * [Rebel Technology](https://community.rebeltech.org/tags/puredata)
-  * [Daisy](https://forum.electro-smith.com/c/integrations/pure-data/32)
-  * [MOD](https://forum.moddevices.com/c/developers/pure-data/56)
+- [Discord](https://discord.gg/fmxJveg)
+- [IRC](https://web.libera.chat/#hvcc)
+- A number of forums:
+  - [Bela](https://forum.bela.io/?q=hvcc)
+  - [Rebel Technology](https://community.rebeltech.org/tags/puredata)
+  - [Daisy](https://forum.electro-smith.com/c/integrations/pure-data/32)
+  - [MOD](https://forum.moddevices.com/c/developers/pure-data/56)
 
 Or you can use the [discussions](https://github.com/Wasted-Audio/hvcc/discussions) tab of this repository
+
+## Funding
+
+This project is partially funded through [NGI0 Commons Fund](https://nlnet.nl/commonsfund), a fund established by [NLnet](https://nlnet.nl) with financial support from the European Commission's [Next Generation Internet](https://ngi.eu) program. Learn more at the [NLnet project page](https://nlnet.nl/project/HVCC).
+
+[<img src="https://nlnet.nl/logo/banner.png" alt="NLnet foundation logo" width="20%" />](https://nlnet.nl)
+[<img src="https://nlnet.nl/image/logos/NGI0_tag.svg" alt="NGI Zero Logo" width="20%" />](https://nlnet.nl/commonsfund)

@@ -98,6 +98,7 @@ bool msg_hasFormat(const HvMessage *m, const char *fmt) {
   hv_assert(fmt != NULL);
   const int n = msg_getNumElements(m);
   for (int i = 0; i < n; ++i) {
+    if (fmt[i] == '\0') return false; // Stop if the format string is shorter than the message
     switch (fmt[i]) {
       case 'b': if (!msg_isBang(m, i)) return false; break;
       case 'f': if (!msg_isFloat(m, i)) return false; break;
@@ -147,8 +148,9 @@ hv_uint32_t msg_getHash(const HvMessage *const m, int i) {
   switch (msg_getType(m,i)) {
     case HV_MSG_BANG: return 0xFFFFFFFF;
     case HV_MSG_FLOAT: {
-      float f = msg_getFloat(m,i);
-      return *((hv_uint32_t *) &f);
+      union { float f; hv_uint32_t u; } fhash;
+      fhash.f = msg_getFloat(m,i);
+      return fhash.u;
     }
     case HV_MSG_SYMBOL: return hv_string_to_hash(msg_getSymbol(m,i));
     case HV_MSG_HASH: return (&(m->elem)+i)->data.h;
